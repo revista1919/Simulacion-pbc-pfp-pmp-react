@@ -22,6 +22,14 @@ import React, { useEffect, useRef, useState } from "react";
   - Pausa/Play, Reset, export CSV de logs, encuesta a muestra de consumidores (estimación OLS simple).
   - Métricas básicas: eficiencia E (comparación con contrafactual "si conocieran la demanda real"), lucro agregado, stock, precios y cantidades.
 
+  Mejoras para usabilidad (para usuarios sin conocimiento en finanzas):
+  - Interfaz más intuitiva: secciones claras con explicaciones simples y tooltips.
+  - Gráficos mejorados: sparklines con etiquetas, colores y leyendas; agregados gráficos para eficiencia y lucro.
+  - Explicaciones: panel de ayuda con definiciones básicas (qué es PBC, demanda, etc.).
+  - Input usuario: validación básica, ejemplos pre-cargados y vista previa.
+  - Dashboard principal con métricas clave destacadas y sugerencias en lenguaje sencillo.
+  - Mantener todas las funciones existentes sin romper nada.
+
   Simplificaciones razonables para mantener el demo ligero (pero fácilmente extensible):
   - Función de producción F(K,L) simplificada a un multiplicador de productividad A * capacidad.
   - No se usa un motor de físicas ni colas complejas — las órdenes se modelan con objetos y tiempos de entrega.
@@ -143,10 +151,12 @@ export default function App() {
   const [mode, setMode] = useState("auto"); // 'auto' | 'user'
   const [logsCsvUrl, setLogsCsvUrl] = useState(null);
   const [historyWindow, setHistoryWindow] = useState(120); // mostrar últimos N ticks
+  const [showHelp, setShowHelp] = useState(true); // Panel de ayuda inicial
 
   // User demand input (if mode === 'user')
   const [userDemandLatex, setUserDemandLatex] = useState('q = 100 - 5 p');
   const [userParams, setUserParams] = useState({ a: 100, b: 5 });
+  const [parseError, setParseError] = useState(null);
 
   // -----------------------------
   // Estado de simulación (ref para evitar renders constantes)
@@ -350,12 +360,17 @@ export default function App() {
   // Aplicar ecuación de demanda ingresada por usuario
   // -----------------------------
   function applyUserDemand() {
-    const fn = parseLatexToFunc(userDemandLatex, userParams);
-    simRef.current.userPerceivedDemandFn = fn;
-    // set mode to user implicitly
-    setMode("user");
-    // log
-    simRef.current.logs.push({ t: simRef.current.t, type: "user_set_demand", detail: { userDemandLatex, userParams } });
+    try {
+      const fn = parseLatexToFunc(userDemandLatex, userParams);
+      simRef.current.userPerceivedDemandFn = fn;
+      // set mode to user implicitly
+      setMode("user");
+      // log
+      simRef.current.logs.push({ t: simRef.current.t, type: "user_set_demand", detail: { userDemandLatex, userParams } });
+      setParseError(null);
+    } catch (e) {
+      setParseError("Error en la ecuación: verifica el formato.");
+    }
   }
 
   // -----------------------------
@@ -688,7 +703,7 @@ export default function App() {
   // -----------------------------
   // Renders: minicharts + status
   // -----------------------------
-  function Sparkline({ data, height = 48, width = 240 }) {
+  function Sparkline({ data, height = 80, width = 300, color = "#0ea5e9", label }) {
     if (!data || data.length === 0) return <div className="text-xs text-muted-foreground">sin datos</div>;
     const N = data.length;
     const min = Math.min(...data);
@@ -700,9 +715,14 @@ export default function App() {
       return `${x},${y}`;
     });
     return (
-      <svg width={width} height={height}>
-        <polyline points={points.join(" ")} fill="none" stroke="#0ea5e9" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
-      </svg>
+      <div className="relative">
+        <svg width={width} height={height}>
+          <polyline points={points.join(" ")} fill="none" stroke={color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+          <text x="10" y="20" fill="#6b7280" fontSize="12">{label}</text>
+          <text x="10" y={height - 10} fill="#6b7280" fontSize="10">Min: {min.toFixed(2)}</text>
+          <text x={width - 60} y={height - 10} fill="#6b7280" fontSize="10">Max: {max.toFixed(2)}</text>
+        </svg>
+      </div>
     );
   }
 
@@ -716,15 +736,14 @@ export default function App() {
   // Lucro agregado
   const aggregateProfit = Object.values(s.firms).flat().reduce((sum, f) => sum + f.cash, 0);
 
-  // Small suggestion engine
+  // Small suggestion engine in simple language
   function suggest() {
     // Simple rule: if E low and price above median demand => try to lower price
-    if (!s || !s.series || s.series.price.length < 5) return "No hay suficientes datos aún.";
-    const recentPrices = s.series.price.slice(-20);
+    if (!s || !s.series || s.series.price.length < 5) return "La simulación está empezando, espera un poco para ver sugerencias.";
     const recentQd = s.series.qDemand.slice(-20).reduce((a, b) => a + b, 0) / Math.max(1, Math.min(20, s.series.qDemand.length));
-    if (latestQserved < 0.9 * recentQd) return "Sugerencia: hay escasez. Considere bajar precio o aumentar producción (si es posible).";
-    if (latestQserved > 1.2 * recentQd) return "Sugerencia: hay exceso de oferta. Considere subir precio o reducir producción.";
-    return "Sugerencia: la situación está relativamente balanceada.";
+    if (latestQserved < 0.9 * recentQd) return "Parece que no hay suficiente producto para todos los compradores. Prueba bajando el precio o aumentando la producción.";
+    if (latestQserved > 1.2 * recentQd) return "Hay más producto del que la gente quiere comprar. Prueba subiendo el precio o reduciendo la producción.";
+    return "Todo parece equilibrado ahora mismo. ¡Buen trabajo!";
   }
 
   // -----------------------------
@@ -733,153 +752,197 @@ export default function App() {
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900 p-4 font-sans">
       <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.5/MathJax.js?config=TeX-MML-AM_CHTML" async></script>
-      <div className="max-w-7xl mx-auto grid grid-cols-12 gap-4">
-        <div className="col-span-3 bg-white rounded-2xl shadow p-4">
-          <h2 className="text-lg font-semibold">Control de simulación</h2>
-          <div className="flex gap-2 mt-3">
-            <button className="px-3 py-2 bg-green-500 text-white rounded" onClick={() => setRunning(true)}>
-              ▶️ Ejecutar
-            </button>
-            <button className="px-3 py-2 bg-yellow-400 text-white rounded" onClick={() => setRunning(false)}>
-              ⏸ Pausar
-            </button>
-            <button className="px-3 py-2 bg-red-500 text-white rounded" onClick={handleReset}>
-              🔁 Reset
-            </button>
-            <button className="px-3 py-2 bg-purple-500 text-white rounded" onClick={handleFinalize}>
-              Finalizar
-            </button>
+      <div className="max-w-7xl mx-auto">
+        {/* Panel de ayuda para principiantes */}
+        {showHelp && (
+          <div className="mb-6 bg-blue-100 p-4 rounded-lg shadow">
+            <div className="flex justify-between items-center">
+              <h2 className="text-lg font-semibold">Bienvenido a la Simulación Económica Simple</h2>
+              <button onClick={() => setShowHelp(false)} className="text-blue-500">Cerrar</button>
+            </div>
+            <p className="mt-2 text-sm">Esta herramienta simula un mercado con compradores y productores. No necesitas saber de finanzas para usarla.</p>
+            <ul className="mt-2 text-sm list-disc pl-5">
+              <li><strong>PBC</strong>: Empresas que hacen productos para la gente (como comida o ropa).</li>
+              <li><strong>PFP</strong>: Empresas que hacen herramientas para las PBC.</li>
+              <li><strong>PMP</strong>: Empresas que sacan materias primas (como madera o metal).</li>
+              <li><strong>Demanda</strong>: Cuánto quiere comprar la gente a cierto precio.</li>
+              <li><strong>Eficiencia</strong>: Qué tan bien se ajusta la producción a lo que la gente quiere (0% malo, 100% perfecto).</li>
+              <li>Usa los botones para controlar y observa los gráficos para ver cómo cambia todo en tiempo real.</li>
+            </ul>
           </div>
+        )}
 
-          <div className="mt-4 space-y-2">
-            <label className="block text-sm">Seed (reproducible)</label>
-            <input className="w-full p-2 border rounded" value={seed} onChange={(e) => setSeed(parseInt(e.target.value || 0))} />
-            <button
-              className="w-full mt-2 p-2 bg-blue-600 text-white rounded"
-              onClick={() => initSimulation(Number(seed || DEFAULT_SEED))}
-            >
-              Inicializar con seed
-            </button>
-          </div>
-
-          <div className="mt-4">
-            <h3 className="font-medium">Modo demanda</h3>
-            <div className="mt-2">
-              <label className="inline-flex items-center">
-                <input type="radio" name="mode" checked={mode === "auto"} onChange={() => setMode("auto")} />
-                <span className="ml-2">Automático</span>
-              </label>
-              <label className="inline-flex items-center ml-4">
-                <input type="radio" name="mode" checked={mode === "user"} onChange={() => setMode("user")} />
-                <span className="ml-2">Usuario</span>
-              </label>
+        <div className="grid grid-cols-12 gap-4">
+          <div className="col-span-3 bg-white rounded-2xl shadow p-4">
+            <h2 className="text-lg font-semibold">Controles Principales</h2>
+            <p className="text-xs text-gray-500 mb-2">Usa estos botones para manejar la simulación.</p>
+            <div className="flex gap-2 mt-3">
+              <button className="px-3 py-2 bg-green-500 text-white rounded" onClick={() => setRunning(true)} title="Inicia o continúa la simulación">
+                ▶️ Ejecutar
+              </button>
+              <button className="px-3 py-2 bg-yellow-400 text-white rounded" onClick={() => setRunning(false)} title="Detiene la simulación temporalmente">
+                ⏸ Pausar
+              </button>
+              <button className="px-3 py-2 bg-red-500 text-white rounded" onClick={handleReset} title="Reinicia todo desde cero">
+                🔁 Reset
+              </button>
+              <button className="px-3 py-2 bg-purple-500 text-white rounded" onClick={handleFinalize} title="Detiene y muestra resultados finales">
+                Finalizar
+              </button>
             </div>
 
-            {mode === "user" && (
-              <div className="mt-2 bg-gray-50 p-2 rounded">
-                <div className="text-sm mb-2">Inserte función de demanda en formato LaTeX (ej: q = a - b p, q = a - b \ln(1 + p), q = a e^{"{-b p}"}). Use \ln para log, e^{"{}"} para exp.</div>
-                <input className="w-full p-2 border rounded" value={userDemandLatex} onChange={(e) => setUserDemandLatex(e.target.value)} />
-                <div className="mt-2">
-                  <label className="text-sm">a</label>
-                  <input className="w-full p-2 border rounded" value={userParams.a} onChange={(e) => setUserParams({ ...userParams, a: parseFloat(e.target.value) })} />
-                  <label className="text-sm mt-2">b</label>
-                  <input className="w-full p-2 border rounded" value={userParams.b} onChange={(e) => setUserParams({ ...userParams, b: parseFloat(e.target.value) })} />
+            <div className="mt-4 space-y-2">
+              <label className="block text-sm">Semilla (para repetir el mismo experimento)</label>
+              <input className="w-full p-2 border rounded" value={seed} onChange={(e) => setSeed(parseInt(e.target.value || 0))} />
+              <button
+                className="w-full mt-2 p-2 bg-blue-600 text-white rounded"
+                onClick={() => initSimulation(Number(seed || DEFAULT_SEED))}
+              >
+                Inicializar
+              </button>
+            </div>
+
+            <div className="mt-4">
+              <h3 className="font-medium">Modo de Demanda</h3>
+              <p className="text-xs text-gray-500 mb-2">Elige cómo se calcula lo que la gente quiere comprar.</p>
+              <div className="mt-2">
+                <label className="inline-flex items-center">
+                  <input type="radio" name="mode" checked={mode === "auto"} onChange={() => setMode("auto")} />
+                  <span className="ml-2" title="La simulación decide automáticamente la demanda (aleatoria).">Automático</span>
+                </label>
+                <label className="inline-flex items-center ml-4">
+                  <input type="radio" name="mode" checked={mode === "user"} onChange={() => setMode("user")} />
+                  <span className="ml-2" title="Tú introduces una fórmula para la demanda.">Manual</span>
+                </label>
+              </div>
+
+              {mode === "user" && (
+                <div className="mt-2 bg-gray-50 p-2 rounded">
+                  <div className="text-sm mb-2">Introduce una fórmula para la demanda (ej: q = a - b p). Usa números simples.</div>
+                  <input className="w-full p-2 border rounded" value={userDemandLatex} onChange={(e) => setUserDemandLatex(e.target.value)} />
+                  {parseError && <p className="text-red-500 text-xs mt-1">{parseError}</p>}
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-sm">a (intercepto)</label>
+                      <input className="w-full p-2 border rounded" type="number" value={userParams.a} onChange={(e) => setUserParams({ ...userParams, a: parseFloat(e.target.value) })} />
+                    </div>
+                    <div>
+                      <label className="text-sm">b (pendiente)</label>
+                      <input className="w-full p-2 border rounded" type="number" value={userParams.b} onChange={(e) => setUserParams({ ...userParams, b: parseFloat(e.target.value) })} />
+                    </div>
+                  </div>
+                  <button className="w-full mt-2 p-2 bg-indigo-600 text-white rounded" onClick={applyUserDemand}>
+                    Aplicar fórmula (sin detener)
+                  </button>
+                  <div id="latex-preview" className="mt-2 text-center" dangerouslySetInnerHTML={{ __html: `$$${userDemandLatex}$$` }} />
                 </div>
-                <button className="w-full mt-2 p-2 bg-indigo-600 text-white rounded" onClick={applyUserDemand}>
-                  Aplicar ecuación (sin pausar)
-                </button>
-                <div id="latex-preview" className="mt-2 text-center" dangerouslySetInnerHTML={{ __html: `$$${userDemandLatex}$$` }} />
+              )}
+            </div>
+
+            <div className="mt-4">
+              <h3 className="font-medium">Herramientas Útiles</h3>
+              <p className="text-xs text-gray-500 mb-2">Obtén información extra o descarga datos.</p>
+              <button className="w-full mt-2 p-2 bg-slate-600 text-white rounded" onClick={() => {
+                const est = runSurvey(30);
+                alert(`Estimación aproximada: q ≈ ${est.a.toFixed(1)} + ${est.b.toFixed(1)} p\n(Esto es una idea general, no exacta).`);
+              }} title="Pregunta a un grupo pequeño de compradores qué piensan (con algo de error).">
+                Encuesta rápida (30 compradores)
+              </button>
+              <button className="w-full mt-2 p-2 bg-emerald-600 text-white rounded" onClick={exportLogsCSV} title="Descarga un archivo con todos los eventos de la simulación.">
+                Exportar datos (CSV)
+              </button>
+              {logsCsvUrl && (
+                <a className="block mt-2 text-sm text-blue-700" href={logsCsvUrl} download={`sim_logs_seed_${seed}.csv`}>Descargar archivo</a>
+              )}
+            </div>
+          </div>
+
+          <div className="col-span-9 bg-white rounded-2xl shadow p-4">
+            <div className="flex justify-between items-start">
+              <h2 className="text-xl font-semibold">Panel de Resultados en Tiempo Real</h2>
+              <div className="text-sm text-gray-500">Tiempo transcurrido: {s.t} segundos</div>
+            </div>
+
+            <div className="mt-4">
+              <h3 className="font-medium">Métricas Clave</h3>
+              <p className="text-xs text-gray-500 mb-2">Resumen de cómo va la simulación.</p>
+              <div className="grid grid-cols-4 gap-4">
+                <div className="p-3 bg-gray-50 rounded" title="El precio actual de los productos en el mercado.">
+                  <div className="text-xs text-gray-500">Precio</div>
+                  <div className="text-lg font-medium">{latestPrice.toFixed(3)}</div>
+                </div>
+                <div className="p-3 bg-gray-50 rounded" title="Cuánto quiere comprar la gente en total (oculto, con algo de ruido).">
+                  <div className="text-xs text-gray-500">Demanda Total</div>
+                  <div className="text-lg font-medium">{latestQd.toFixed(2)}</div>
+                </div>
+                <div className="p-3 bg-gray-50 rounded" title="Cuánto producto se vendió realmente.">
+                  <div className="text-xs text-gray-500">Cantidad Vendida</div>
+                  <div className="text-lg font-medium">{latestQserved.toFixed(2)}</div>
+                </div>
+                <div className="p-3 bg-gray-50 rounded" title="Qué tan bien se ajusta la producción a la demanda (100% es perfecto).">
+                  <div className="text-xs text-gray-500">Eficiencia</div>
+                  <div className="text-lg font-medium">{(latestE * 100).toFixed(2)}%</div>
+                </div>
               </div>
-            )}
-          </div>
-
-          <div className="mt-4">
-            <h3 className="font-medium">Herramientas</h3>
-            <button className="w-full mt-2 p-2 bg-slate-600 text-white rounded" onClick={() => {
-              const est = runSurvey(30);
-              alert(`Estimación OLS (q = a + b p)\na=${est.a.toFixed(3)}, b=${est.b.toFixed(3)}`);
-            }}>
-              Encuesta a 30 consumidores (ruidosa)
-            </button>
-            <button className="w-full mt-2 p-2 bg-emerald-600 text-white rounded" onClick={exportLogsCSV}>
-              Exportar logs (CSV)
-            </button>
-            {logsCsvUrl && (
-              <a className="block mt-2 text-sm text-blue-700" href={logsCsvUrl} download={`sim_logs_seed_${seed}.csv`}>Descargar CSV</a>
-            )}
-          </div>
-
-          <div className="mt-4 text-sm text-gray-600">
-            <div>Precio actual: <strong>{latestPrice.toFixed(3)}</strong></div>
-            <div>Demanda (estimada oculta): <strong>{latestQd.toFixed(2)}</strong></div>
-            <div>Cantidad servida: <strong>{latestQserved.toFixed(2)}</strong></div>
-            <div>Eficiencia (E): <strong>{(latestE * 100).toFixed(2)}%</strong></div>
-            <div className="mt-2 text-xs">Sugerencia: {suggest()}</div>
-          </div>
-        </div>
-
-        <div className="col-span-9 bg-white rounded-2xl shadow p-4">
-          <div className="flex justify-between items-start">
-            <h2 className="text-xl font-semibold">Panel en tiempo real</h2>
-            <div className="text-sm text-gray-500">t = {s.t}s</div>
-          </div>
-
-          <div className="grid grid-cols-3 gap-4 mt-4">
-            <div className="p-3 bg-gray-50 rounded">
-              <div className="text-xs text-gray-500">Precio (serie)</div>
-              <Sparkline data={s.series.price.slice(-historyWindow)} />
-              <div className="text-sm font-medium">{latestPrice.toFixed(3)}</div>
-            </div>
-            <div className="p-3 bg-gray-50 rounded">
-              <div className="text-xs text-gray-500">Demanda oculta (serie)</div>
-              <Sparkline data={s.series.qDemand.slice(-historyWindow)} />
-              <div className="text-sm font-medium">{(s.series.qDemand.slice(-1)[0] || 0).toFixed(2)}</div>
-            </div>
-            <div className="p-3 bg-gray-50 rounded">
-              <div className="text-xs text-gray-500">Cantidad servida (serie)</div>
-              <Sparkline data={s.series.qServed.slice(-historyWindow)} />
-              <div className="text-sm font-medium">{(s.series.qServed.slice(-1)[0] || 0).toFixed(2)}</div>
-            </div>
-          </div>
-
-          <div className="mt-4 grid grid-cols-3 gap-4">
-            <div className="col-span-2">
-              <h3 className="font-medium">Logs recientes</h3>
-              <div className="h-56 overflow-auto bg-gray-50 rounded p-2 text-xs">
-                {s.logs.slice(-200).map((L, idx) => (
-                  <div key={idx} className="p-1 border-b border-gray-100">
-                    <strong>[{L.t}]</strong> {L.type} {L.price ? ` price=${(L.price||0).toFixed(2)}` : ""}
-                  </div>
-                ))}
+              <div className="mt-4 p-3 bg-yellow-100 rounded">
+                <div className="text-sm font-medium">Sugerencia simple:</div>
+                <div className="text-sm">{suggest()}</div>
               </div>
             </div>
-            <div>
-              <h3 className="font-medium">Empresas (resumen)</h3>
-              <div className="h-56 overflow-auto bg-gray-50 rounded p-2 text-xs">
-                <div className="mb-2"><strong>PBC</strong></div>
-                {s.firms.PBC.map((f) => (
-                  <div key={f.id} className="text-xs border-b border-dashed py-1">
-                    <div>{f.id} A={f.A.toFixed(2)} cap={f.capacity.toFixed(2)} inv={f.inventory.toFixed(2)} cash={f.cash.toFixed(1)}</div>
-                  </div>
-                ))}
-                <div className="mt-2"><strong>PFP / PMP</strong></div>
-                {s.firms.PFP.slice(0, 6).map((f) => (
-                  <div key={f.id} className="text-xs border-b border-dashed py-1">{f.id} inv={f.inventory.toFixed(1)}</div>
-                ))}
-                {s.firms.PMP.slice(0, 6).map((f) => (
-                  <div key={f.id} className="text-xs border-b border-dashed py-1">{f.id} inv={f.inventory.toFixed(1)}</div>
-                ))}
+
+            <div className="mt-6">
+              <h3 className="font-medium">Gráficos de Evolución</h3>
+              <p className="text-xs text-gray-500 mb-2">Ve cómo cambian las cosas con el tiempo (últimos {historyWindow} segundos).</p>
+              <div className="grid grid-cols-2 gap-4">
+                <Sparkline data={s.series.price.slice(-historyWindow)} color="#ef4444" label="Precio" />
+                <Sparkline data={s.series.qDemand.slice(-historyWindow)} color="#3b82f6" label="Demanda Oculta" />
+                <Sparkline data={s.series.qServed.slice(-historyWindow)} color="#22c55e" label="Cantidad Vendida" />
+                <Sparkline data={s.series.efficiency.slice(-historyWindow)} color="#a855f7" label="Eficiencia" />
               </div>
             </div>
-          </div>
 
-          <div className="mt-4">
-            <h3 className="font-medium">Observaciones agregadas (ruidosas)</h3>
-            <div className="text-xs text-gray-500">Muestra que vería el planificador (ruido, no identifica la demanda real completa)</div>
-            <div className="mt-2 grid grid-cols-4 gap-2 text-xs">
-              {s.hiddenDemandSamples.map((h, i) => (
-                <div key={i} className="p-2 bg-white rounded shadow-sm">p={h.p.toFixed(2)} q_obs={h.q.toFixed(2)}</div>
-              ))}
+            <div className="mt-6 grid grid-cols-2 gap-4">
+              <div>
+                <h3 className="font-medium">Eventos Recientes</h3>
+                <p className="text-xs text-gray-500 mb-2">Qué ha pasado últimamente en la simulación.</p>
+                <div className="h-48 overflow-auto bg-gray-50 rounded p-2 text-xs">
+                  {s.logs.slice(-100).map((L, idx) => (
+                    <div key={idx} className="p-1 border-b border-gray-100">
+                      <strong>[{L.t}s]</strong> {L.type} {L.price ? ` - Precio: ${(L.price||0).toFixed(2)}` : ""}
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <h3 className="font-medium">Resumen de Empresas</h3>
+                <p className="text-xs text-gray-500 mb-2">Estado actual de las productoras (inventario y ganancias).</p>
+                <div className="h-48 overflow-auto bg-gray-50 rounded p-2 text-xs">
+                  <div className="mb-2"><strong>PBC (Productos para consumidores)</strong></div>
+                  {s.firms.PBC.map((f) => (
+                    <div key={f.id} className="border-b border-dashed py-1" title={`Productividad: ${f.A.toFixed(2)}, Capacidad: ${f.capacity.toFixed(2)}`}>
+                      {f.id}: Inv {f.inventory.toFixed(2)}, Ganancias {f.cash.toFixed(1)}
+                    </div>
+                  ))}
+                  <div className="mt-2"><strong>PFP (Factores de producción)</strong></div>
+                  {s.firms.PFP.slice(0, 5).map((f) => (
+                    <div key={f.id} className="border-b border-dashed py-1">{f.id}: Inv {f.inventory.toFixed(1)}</div>
+                  ))}
+                  <div className="mt-2"><strong>PMP (Materias primas)</strong></div>
+                  {s.firms.PMP.slice(0, 5).map((f) => (
+                    <div key={f.id} className="border-b border-dashed py-1">{f.id}: Inv {f.inventory.toFixed(1)}</div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-6">
+              <h3 className="font-medium">Observaciones de Mercado (con ruido)</h3>
+              <p className="text-xs text-gray-500 mb-2">Datos aproximados de lo que ven los planificadores (no perfectos).</p>
+              <div className="grid grid-cols-5 gap-2 text-xs">
+                {s.hiddenDemandSamples.slice(0, 10).map((h, i) => (
+                  <div key={i} className="p-2 bg-white rounded shadow-sm">Precio: {h.p.toFixed(2)}<br/>Cantidad: {h.q.toFixed(2)}</div>
+                ))}
+              </div>
             </div>
           </div>
         </div>
@@ -888,16 +951,16 @@ export default function App() {
       {finished && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
           <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">
-            <h2 className="text-xl font-bold mb-4">Estadísticas Finales</h2>
+            <h2 className="text-xl font-bold mb-4">Resultados Finales</h2>
             <div className="space-y-2 text-sm">
-              <p>Eficiencia: <strong>{(latestE * 100).toFixed(2)}%</strong></p>
-              <p>Lucro Agregado: <strong>{aggregateProfit.toFixed(2)}</strong></p>
+              <p>Eficiencia: <strong>{(latestE * 100).toFixed(2)}%</strong> (qué tan bien se ajustó todo)</p>
+              <p>Ganancias Totales: <strong>{aggregateProfit.toFixed(2)}</strong> (dinero ganado por empresas)</p>
               <p>Precio Final: <strong>{latestPrice.toFixed(3)}</strong></p>
-              <p>Demanda Final Oculta: <strong>{latestQd.toFixed(2)}</strong></p>
-              <p>Cantidad Servida Final: <strong>{latestQserved.toFixed(2)}</strong></p>
+              <p>Demanda Final: <strong>{latestQd.toFixed(2)}</strong></p>
+              <p>Ventas Finales: <strong>{latestQserved.toFixed(2)}</strong></p>
             </div>
             <button className="mt-4 w-full p-2 bg-red-500 text-white rounded" onClick={() => setFinished(false)}>
-              Cerrar
+              Cerrar y continuar
             </button>
           </div>
         </div>
