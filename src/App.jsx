@@ -82,6 +82,24 @@ function olsLinear(x, y) {
   return { a, b };
 }
 
+// Parse LaTeX-like demand equation to JS function
+function parseLatexToFunc(latex, params) {
+  // Clean and normalize LaTeX
+  latex = latex.replace(/\\ln/g, 'Math.log').replace(/e\^\{([^}]+)\}/g, 'Math.exp($1)').replace(/\s/g, '').replace(/q=/, '');
+  // Replace variables with params
+  Object.keys(params).forEach(key => {
+    latex = latex.replace(new RegExp(key, 'g'), params[key]);
+  });
+  // Safe eval to function
+  try {
+    // eslint-disable-next-line no-new-func
+    return new Function('p', `return Math.max(0, ${latex});`);
+  } catch (e) {
+    console.error('Parse error:', e);
+    return (p) => 0;
+  }
+}
+
 // -----------------------------
 // Component principal
 // -----------------------------
@@ -120,15 +138,15 @@ export default function App() {
   // Estado de UI / control
   // -----------------------------
   const [running, setRunning] = useState(true);
+  const [finished, setFinished] = useState(false);
   const [tickMs, setTickMs] = useState(defaultConfig.current.tickMs);
   const [mode, setMode] = useState("auto"); // 'auto' | 'user'
   const [logsCsvUrl, setLogsCsvUrl] = useState(null);
   const [historyWindow, setHistoryWindow] = useState(120); // mostrar últimos N ticks
 
   // User demand input (if mode === 'user')
-  const [userDemandType, setUserDemandType] = useState("linear");
+  const [userDemandLatex, setUserDemandLatex] = useState('q = 100 - 5 p');
   const [userParams, setUserParams] = useState({ a: 100, b: 5 });
-  const [userCustomExpr, setUserCustomExpr] = useState("a - b*p");
 
   // -----------------------------
   // Estado de simulación (ref para evitar renders constantes)
@@ -150,7 +168,7 @@ export default function App() {
         time: [],
       },
       userPerceivedDemandFn: null, // función que usan las PBC para planificar
-      hiddenDemandSamples: [], // observaciones ruidosas que verá el usuario
+      hiddenDemandSamples: [], // observaciones ruidosas que vera el usuario
       seed: seed,
       rng: mulberry32(seed),
       lastTickWall: Date.now(),
@@ -331,46 +349,13 @@ export default function App() {
   // -----------------------------
   // Aplicar ecuación de demanda ingresada por usuario
   // -----------------------------
-  function buildUserDemandFn() {
-    // Soported types: linear, log, exp, custom
-    if (userDemandType === "linear") {
-      const a = parseFloat(userParams.a) || 0;
-      const b = parseFloat(userParams.b) || 0.0001;
-      return (p) => Math.max(0, a - b * p);
-    }
-    if (userDemandType === "log") {
-      const a = parseFloat(userParams.a) || 0;
-      const b = parseFloat(userParams.b) || 0.0001;
-      return (p) => Math.max(0, a - b * Math.log(1 + Math.max(0, p)));
-    }
-    if (userDemandType === "exp") {
-      const a = parseFloat(userParams.a) || 0;
-      const b = parseFloat(userParams.b) || 0.0001;
-      return (p) => Math.max(0, a * Math.exp(-b * p));
-    }
-    if (userDemandType === "custom") {
-      // userCustomExpr example: 'a - b*p' and params from userParams: {a:..., b:...}
-      // We'll create a safe Function from expression — WARNING: this executes in client.
-      try {
-        const expr = userCustomExpr;
-        const params = { ...userParams };
-        return (p) => {
-          // bind params and p
-          const a = parseFloat(params.a) || 0;
-          const b = parseFloat(params.b) || 0;
-          // eslint-disable-next-line no-new-func
-          const fn = new Function("p", "a", "b", `return Math.max(0, ${expr});`);
-          try {
-            return Math.max(0, Number(fn(p, a, b)) || 0);
-          } catch (e) {
-            return 0;
-          }
-        };
-      } catch (e) {
-        return (p) => 0;
-      }
-    }
-    return (p) => 0;
+  function applyUserDemand() {
+    const fn = parseLatexToFunc(userDemandLatex, userParams);
+    simRef.current.userPerceivedDemandFn = fn;
+    // set mode to user implicitly
+    setMode("user");
+    // log
+    simRef.current.logs.push({ t: simRef.current.t, type: "user_set_demand", detail: { userDemandLatex, userParams } });
   }
 
   // -----------------------------
@@ -637,7 +622,7 @@ export default function App() {
   useEffect(() => {
     if (!simRef.current || !simRef.current.rng) initSimulation(seed);
     let timer = null;
-    if (running) {
+    if (running && !finished) {
       timer = setInterval(() => {
         simTick();
       }, tickMs);
@@ -646,19 +631,7 @@ export default function App() {
       if (timer) clearInterval(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [running, tickMs, mode]);
-
-  // -----------------------------
-  // UI helpers: apply user demand
-  // -----------------------------
-  function applyUserDemand() {
-    const fn = buildUserDemandFn();
-    simRef.current.userPerceivedDemandFn = fn;
-    // set mode to user implicitly
-    setMode("user");
-    // log
-    simRef.current.logs.push({ t: simRef.current.t, type: "user_set_demand", detail: { userDemandType, userParams, userCustomExpr } });
-  }
+  }, [running, tickMs, mode, finished]);
 
   // -----------------------------
   // Export logs as CSV
@@ -701,6 +674,15 @@ export default function App() {
   // -----------------------------
   function handleReset() {
     initSimulation(seed);
+    setFinished(false);
+  }
+
+  // -----------------------------
+  // Finalizar: calcula stats finales
+  // -----------------------------
+  function handleFinalize() {
+    setRunning(false);
+    setFinished(true);
   }
 
   // -----------------------------
@@ -731,6 +713,9 @@ export default function App() {
   const latestQserved = s.series.qServed[s.series.qServed.length - 1] || 0;
   const latestE = s.series.efficiency ? s.series.efficiency[s.series.efficiency.length - 1] : 0;
 
+  // Lucro agregado
+  const aggregateProfit = Object.values(s.firms).flat().reduce((sum, f) => sum + f.cash, 0);
+
   // Small suggestion engine
   function suggest() {
     // Simple rule: if E low and price above median demand => try to lower price
@@ -747,6 +732,7 @@ export default function App() {
   // -----------------------------
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900 p-4 font-sans">
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.5/MathJax.js?config=TeX-MML-AM_CHTML" async></script>
       <div className="max-w-7xl mx-auto grid grid-cols-12 gap-4">
         <div className="col-span-3 bg-white rounded-2xl shadow p-4">
           <h2 className="text-lg font-semibold">Control de simulación</h2>
@@ -759,6 +745,9 @@ export default function App() {
             </button>
             <button className="px-3 py-2 bg-red-500 text-white rounded" onClick={handleReset}>
               🔁 Reset
+            </button>
+            <button className="px-3 py-2 bg-purple-500 text-white rounded" onClick={handleFinalize}>
+              Finalizar
             </button>
           </div>
 
@@ -788,24 +777,18 @@ export default function App() {
 
             {mode === "user" && (
               <div className="mt-2 bg-gray-50 p-2 rounded">
-                <select value={userDemandType} onChange={(e) => setUserDemandType(e.target.value)} className="w-full p-2 border rounded">
-                  <option value="linear">Lineal q = a - b p</option>
-                  <option value="log">Logarítmica q = a - b log(1+p)</option>
-                  <option value="exp">Exponencial q = a e^{"{-b p}"}</option>
-                git add .                git add .git                git add .                git add .                  <option value="custom">Personalizada (JS)</option>
-                </select>
+                <div className="text-sm mb-2">Inserte función de demanda en formato LaTeX (ej: q = a - b p, q = a - b \ln(1 + p), q = a e^{"{-b p}"}). Use \ln para log, e^{"{}"} para exp.</div>
+                <input className="w-full p-2 border rounded" value={userDemandLatex} onChange={(e) => setUserDemandLatex(e.target.value)} />
                 <div className="mt-2">
                   <label className="text-sm">a</label>
-                  <input className="w-full p-2 border rounded" value={userParams.a} onChange={(e) => setUserParams({ ...userParams, a: e.target.value })} />
+                  <input className="w-full p-2 border rounded" value={userParams.a} onChange={(e) => setUserParams({ ...userParams, a: parseFloat(e.target.value) })} />
                   <label className="text-sm mt-2">b</label>
-                  <input className="w-full p-2 border rounded" value={userParams.b} onChange={(e) => setUserParams({ ...userParams, b: e.target.value })} />
+                  <input className="w-full p-2 border rounded" value={userParams.b} onChange={(e) => setUserParams({ ...userParams, b: parseFloat(e.target.value) })} />
                 </div>
-                {userDemandType === "custom" && (
-                  <textarea className="w-full p-2 border rounded mt-2" value={userCustomExpr} onChange={(e) => setUserCustomExpr(e.target.value)} />
-                )}
                 <button className="w-full mt-2 p-2 bg-indigo-600 text-white rounded" onClick={applyUserDemand}>
                   Aplicar ecuación (sin pausar)
                 </button>
+                <div id="latex-preview" className="mt-2 text-center" dangerouslySetInnerHTML={{ __html: `$$${userDemandLatex}$$` }} />
               </div>
             )}
           </div>
@@ -901,6 +884,24 @@ export default function App() {
           </div>
         </div>
       </div>
+
+      {finished && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+          <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">
+            <h2 className="text-xl font-bold mb-4">Estadísticas Finales</h2>
+            <div className="space-y-2 text-sm">
+              <p>Eficiencia: <strong>{(latestE * 100).toFixed(2)}%</strong></p>
+              <p>Lucro Agregado: <strong>{aggregateProfit.toFixed(2)}</strong></p>
+              <p>Precio Final: <strong>{latestPrice.toFixed(3)}</strong></p>
+              <p>Demanda Final Oculta: <strong>{latestQd.toFixed(2)}</strong></p>
+              <p>Cantidad Servida Final: <strong>{latestQserved.toFixed(2)}</strong></p>
+            </div>
+            <button className="mt-4 w-full p-2 bg-red-500 text-white rounded" onClick={() => setFinished(false)}>
+              Cerrar
+            </button>
+          </div>
+        </div>
+      )}
 
       <footer className="max-w-7xl mx-auto mt-6 text-xs text-gray-500">
         <div>Nota: Esta simulación corre enteramente en el navegador y no guarda datos persistentemente. Cerrar la pestaña borra todo.</div>
