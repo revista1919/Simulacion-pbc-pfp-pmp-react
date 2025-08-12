@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 
 /*
-  Simulación PBC - PFP - PMP (single-file React component)
+  Simulación PBC - PFP - PMP (componente React en un solo archivo)
   --------------------------------------------------------
   - Diseñada para correr 100% en el navegador (GitHub Pages / página estática).
   - No usa backend: todo en memoria; al cerrar la pestaña se pierde el estado.
@@ -29,6 +29,7 @@ import React, { useEffect, useRef, useState } from "react";
   - Input usuario: validación básica, ejemplos pre-cargados y vista previa.
   - Dashboard principal con métricas clave destacadas y sugerencias en lenguaje sencillo.
   - Mantener todas las funciones existentes sin romper nada.
+  - Todo en español: traducciones completas para botones, etiquetas, mensajes y sugerencias.
 
   Simplificaciones razonables para mantener el demo ligero (pero fácilmente extensible):
   - Función de producción F(K,L) simplificada a un multiplicador de productividad A * capacidad.
@@ -59,21 +60,6 @@ function randRange(rng, a, b) {
   return a + (b - a) * rng();
 }
 
-function pickWeighted(rng, arr) {
-  const total = arr.reduce((s, x) => s + x.weight, 0);
-  let r = rng() * total;
-  for (let i = 0; i < arr.length; i++) {
-    r -= arr[i].weight;
-    if (r <= 0) return arr[i].value;
-  }
-  return arr[arr.length - 1].value;
-}
-
-function nowSec() {
-  return Math.floor(Date.now() / 1000);
-}
-
-// Small OLS for q = a + b * p (we'll use it for estimaciones rápidas)
 function olsLinear(x, y) {
   const n = x.length;
   if (n === 0) return { a: 0, b: 0 };
@@ -90,31 +76,23 @@ function olsLinear(x, y) {
   return { a, b };
 }
 
-// Parse LaTeX-like demand equation to JS function
 function parseLatexToFunc(latex, params) {
-  // Clean and normalize LaTeX
   latex = latex.replace(/\\ln/g, 'Math.log').replace(/e\^\{([^}]+)\}/g, 'Math.exp($1)').replace(/\s/g, '').replace(/q=/, '');
-  // Replace variables with params
   Object.keys(params).forEach(key => {
     latex = latex.replace(new RegExp(key, 'g'), params[key]);
   });
-  // Safe eval to function
   try {
-    // eslint-disable-next-line no-new-func
     return new Function('p', `return Math.max(0, ${latex});`);
   } catch (e) {
-    console.error('Parse error:', e);
+    console.error('Error de parseo:', e);
     return (p) => 0;
   }
 }
 
 // -----------------------------
-// Component principal
+// Componente principal
 // -----------------------------
 export default function App() {
-  // -----------------------------
-  // Configurables (se pueden exponer en UI)
-  // -----------------------------
   const DEFAULT_SEED = 12345;
   const [seed, setSeed] = useState(DEFAULT_SEED);
   const rngRef = useRef(mulberry32(seed));
@@ -122,7 +100,7 @@ export default function App() {
   const defaultConfig = useRef({
     consumersN: 200,
     p0: 1.0,
-    tickMs: 1000, // cada "segundo" simulación (configurable)
+    tickMs: 1000,
     pPriceAdjustGain: 0.08,
     pMin: 0.01,
     consumerUpdateRange: [30, 90],
@@ -135,32 +113,26 @@ export default function App() {
       pmpAdjust: [10, 25],
     },
     innovation: {
-      probPerTick: 0.02, // base
+      probPerTick: 0.02,
       costMultRange: [0.92, 0.99],
       tfpMultRange: [1.02, 1.25],
       adoptionRange: [10, 60],
     },
   });
 
-  // -----------------------------
-  // Estado de UI / control
-  // -----------------------------
   const [running, setRunning] = useState(true);
   const [finished, setFinished] = useState(false);
   const [tickMs, setTickMs] = useState(defaultConfig.current.tickMs);
-  const [mode, setMode] = useState("auto"); // 'auto' | 'user'
+  const [mode, setMode] = useState("auto");
   const [logsCsvUrl, setLogsCsvUrl] = useState(null);
-  const [historyWindow, setHistoryWindow] = useState(120); // mostrar últimos N ticks
-  const [showHelp, setShowHelp] = useState(true); // Panel de ayuda inicial
+  const [historyWindow, setHistoryWindow] = useState(120);
+  const [showHelp, setShowHelp] = useState(true);
+  const [showTutorial, setShowTutorial] = useState(false);
 
-  // User demand input (if mode === 'user')
   const [userDemandLatex, setUserDemandLatex] = useState('q = 100 - 5 p');
   const [userParams, setUserParams] = useState({ a: 100, b: 5 });
   const [parseError, setParseError] = useState(null);
 
-  // -----------------------------
-  // Estado de simulación (ref para evitar renders constantes)
-  // -----------------------------
   const simRef = useRef(null);
   if (!simRef.current) {
     simRef.current = {
@@ -177,8 +149,8 @@ export default function App() {
         efficiency: [],
         time: [],
       },
-      userPerceivedDemandFn: null, // función que usan las PBC para planificar
-      hiddenDemandSamples: [], // observaciones ruidosas que vera el usuario
+      userPerceivedDemandFn: null,
+      hiddenDemandSamples: [],
       seed: seed,
       rng: mulberry32(seed),
       lastTickWall: Date.now(),
@@ -186,12 +158,8 @@ export default function App() {
     };
   }
 
-  // UI-visible state derived from simRef
   const [, setRenderTick] = useState(0);
 
-  // -----------------------------
-  // Inicialización
-  // -----------------------------
   function initSimulation(newSeed = DEFAULT_SEED, cfgOverride = {}) {
     const cfg = { ...defaultConfig.current, ...cfgOverride };
     setTickMs(cfg.tickMs);
@@ -213,7 +181,6 @@ export default function App() {
       stats: {},
     };
 
-    // Generar consumidores
     const N = Math.max(10, Math.round(cfg.consumersN));
     for (let i = 0; i < N; i++) {
       const typeRand = rng();
@@ -221,10 +188,9 @@ export default function App() {
       if (typeRand < 0.6) type = "linear";
       else if (typeRand < 0.85) type = "log";
       else if (typeRand < 0.98) type = "exp";
-      else type = "poly"; // raro
+      else type = "poly";
 
       const a = randRange(rng, 5, 200);
-      // b sign: 75% >0, 20% =0, 5% <0
       const signRoll = rng();
       let b = 0;
       if (signRoll < 0.75) b = randRange(rng, 0.01, 10);
@@ -232,7 +198,7 @@ export default function App() {
       else b = -randRange(rng, 0.1, 5);
 
       const Ti = Math.round(randRange(rng, cfg.consumerUpdateRange[0], cfg.consumerUpdateRange[1]));
-      const nextUpdateAt = Ti; // en segundos de sim
+      const nextUpdateAt = Ti;
 
       simRef.current.consumers.push({
         id: `C${i}`,
@@ -245,15 +211,13 @@ export default function App() {
       });
     }
 
-    // Empresas: sacar aleatorio dentro de rangos configurables
     const pbcCount = Math.round(randRange(rng, cfg.pbcCountRange[0], cfg.pbcCountRange[1]));
     const pfpCount = Math.round(randRange(rng, cfg.pfpCountRange[0], cfg.pfpCountRange[1]));
     const pmpCount = Math.round(randRange(rng, cfg.pmpCountRange[0], cfg.pmpCountRange[1]));
 
-    // Crear funciones sencillas de producción/costes para cada empresa
     for (let i = 0; i < pbcCount; i++) {
       const A = randRange(rng, 0.6, 1.4);
-      const capacity = 1; // placeholder: equilibramos luego
+      const capacity = 1;
       const marginalCost = randRange(rng, 0.2, 1.2);
       simRef.current.firms.PBC.push({
         id: `PBC${i}`,
@@ -299,20 +263,14 @@ export default function App() {
       });
     }
 
-    // Calibrar equilibrio inicial: ajustar capacidades PBC para que Q_supply ≈ Q_agg_consumers(p0)
-    // Primero computamos demanda agregada a p0
     const p0 = cfg.p0;
     const QaggConsumers = simRef.current.consumers.reduce((s, c) => s + computeConsumerDemand(c, p0, 0, rng), 0);
-    // Distribuimos QaggConsumers entre PBC en proporción a A_i
     const totalA = simRef.current.firms.PBC.reduce((s, f) => s + f.A, 0) || 1;
     simRef.current.firms.PBC.forEach((f) => {
-      // capacity representará capacidad de producción por tick
       f.capacity = Math.max(0.1, (QaggConsumers * (f.A / totalA)) / simRef.current.firms.PBC.length);
-      // inventory inicial igual a capacidad
       f.inventory = f.capacity;
     });
 
-    // PFP y PMP ajustamos inventarios/stock inicial para permitir cadena de suministros
     simRef.current.firms.PFP.forEach((f) => {
       f.inventory = f.capacity * 0.5;
     });
@@ -320,22 +278,14 @@ export default function App() {
       f.inventory = f.capacity * 0.7;
     });
 
-    // userPerceivedDemandFn por defecto: función aleatoria (AR(1) por empresa simplificada)
-    simRef.current.userPerceivedDemandFn = null; // modo auto lo ignorará
-
-    // Primeros logs/series
     simRef.current.series.price.push(p0);
     simRef.current.series.qServed.push(QaggConsumers);
     simRef.current.series.qDemand.push(QaggConsumers);
     simRef.current.series.time.push(0);
 
-    // Forzar render inicial
     setRenderTick((r) => r + 1);
   }
 
-  // -----------------------------
-  // Helper: calcular demanda individual dada ecuación y precio
-  // -----------------------------
   function computeConsumerDemand(consumer, p, t, rng) {
     let q = 0;
     if (consumer.type === "linear") {
@@ -345,62 +295,60 @@ export default function App() {
     } else if (consumer.type === "exp") {
       q = consumer.a * Math.exp(-consumer.b * p);
     } else if (consumer.type === "poly") {
-      // simple polinomial: a - b*p - c*p^2 (c small)
       const c = Math.max(0.001, consumer.b * 0.01);
       q = Math.max(0, consumer.a - consumer.b * p - c * p * p);
     }
-    // Ruido multiplicativo
-    const noiseSigma = 0.05; // 5% ruido relativo
+    const noiseSigma = 0.05;
     const noise = 1 + (rng() - 0.5) * 2 * noiseSigma;
     q = Math.max(0, q * noise);
     return q;
   }
 
-  // -----------------------------
-  // Aplicar ecuación de demanda ingresada por usuario
-  // -----------------------------
   function applyUserDemand() {
     try {
       const fn = parseLatexToFunc(userDemandLatex, userParams);
       simRef.current.userPerceivedDemandFn = fn;
-      // set mode to user implicitly
       setMode("user");
-      // log
       simRef.current.logs.push({ t: simRef.current.t, type: "user_set_demand", detail: { userDemandLatex, userParams } });
       setParseError(null);
     } catch (e) {
-      setParseError("Error en la ecuación: verifica el formato.");
+      setParseError("Error en la fórmula: verifica el formato. Ejemplo: q = 100 - 5 p");
     }
   }
 
-  // -----------------------------
-  // Tick de simulación (unidad: 1 segundo por defecto)
-  // -----------------------------
+  function loadExampleDemand(example) {
+    if (example === 1) {
+      setUserDemandLatex('q = 100 - 5 p');
+      setUserParams({ a: 100, b: 5 });
+    } else if (example === 2) {
+      setUserDemandLatex('q = 150 - 10 p');
+      setUserParams({ a: 150, b: 10 });
+    } else if (example === 3) {
+      setUserDemandLatex('q = 200 * e^{-0.5 p}');
+      setUserParams({ a: 200, b: 0.5 });
+    }
+  }
+
   function simTick() {
     const s = simRef.current;
     const cfg = defaultConfig.current;
     const rng = s.rng;
-    s.t += 1; // s.t in seconds (discrete)
+    s.t += 1;
 
-    // 1) Consumidores -> posible actualización de ecuación
     let Qagg = 0;
     for (const c of s.consumers) {
       if (s.t >= c.nextUpdateAt) {
-        // re-muestreo o small drift
         const changeRoll = rng();
         if (changeRoll < 0.15) {
-          // remuestreo completo
           c.a = randRange(rng, 5, 200);
           const signRoll = rng();
           if (signRoll < 0.75) c.b = randRange(rng, 0.01, 10);
           else if (signRoll < 0.95) c.b = 0;
           else c.b = -randRange(rng, 0.1, 5);
         } else {
-          // small noise
           c.a *= 1 + (rng() - 0.5) * 0.1;
           c.b *= 1 + (rng() - 0.5) * 0.05;
         }
-        // shock raro que multiplica intercepto
         if (rng() < 0.01) c.a *= randRange(rng, 1.5, 3.0);
         c.nextUpdateAt = s.t + Math.round(randRange(rng, cfg.consumerUpdateRange[0], cfg.consumerUpdateRange[1]));
         c.lastUpdate = s.t;
@@ -408,37 +356,25 @@ export default function App() {
       Qagg += computeConsumerDemand(c, s.price, s.t, rng);
     }
 
-    // Guardamos sample ruidoso para la vista del usuario
-    // Mostrar estadísticas ruidosas: submuestra con ruido
     const noisyObs = s.consumers.slice(0, Math.min(30, s.consumers.length)).map((c) => {
       const q = computeConsumerDemand(c, s.price, s.t, rng);
-      // añadir ruido en observación
       const obs = q * (1 + (rng() - 0.5) * 0.2);
       return { p: s.price * (1 + (rng() - 0.02) * 0.04), q: Math.max(0, obs) };
     });
     s.hiddenDemandSamples = noisyObs;
 
-    // 2) Empresas deciden planificación
-    // PBC: usan userPerceivedDemandFn (si modo usuario) o su propia demanda estimada automática
     const pbcPerceivedFn = mode === "user" && s.userPerceivedDemandFn ? s.userPerceivedDemandFn : (p) => {
-      // bloqueo: para modo auto usamos una simple AR(1)-like per-firm linear estimate with noise
-      // We'll aggregate a linear estimate across consumers but add firm-level noise
-      // Simpler: each PBC perceives demand = total hidden demand * random factor
       return Qagg * (0.8 + 0.4 * rng());
     };
 
-    // PBC plan: repartir la perceived demand across PBC proportionally to A*capacity
     const sumAcap = s.firms.PBC.reduce((S, f) => S + f.A * f.capacity, 0) || 1;
     for (const f of s.firms.PBC) {
       const share = (f.A * f.capacity) / sumAcap;
       const perceivedTotal = typeof pbcPerceivedFn === "function" ? pbcPerceivedFn(s.price) : 0;
-
-      const plan = perceivedTotal * share; // unidades a planear producir
+      const plan = perceivedTotal * share;
       f.planned = plan;
-      // Si plan > inventory, send orders to PFP
       if (plan > f.inventory + 1e-6) {
         const needed = Math.max(0, plan - f.inventory);
-        // Send an order to a random PFP (could be improved: multi-sourcing)
         const pfp = s.firms.PFP[Math.floor(rng() * s.firms.PFP.length)];
         if (pfp) {
           const delay = Math.round(randRange(rng, cfg.delays.pbcToPfp[0], cfg.delays.pbcToPfp[1]));
@@ -450,27 +386,21 @@ export default function App() {
       }
     }
 
-    // PFP process orders due this tick: when due, they reduce their inventory (if possible) and schedule order to PMP if lack
     for (const order of s.orders.filter((o) => !o.filled && o.due <= s.t)) {
       if (order.level === "PBC->PFP") {
         const pfp = s.firms.PFP.find((x) => x.id === order.to);
         if (!pfp) continue;
-        // If pfp inventory sufficient -> fill to PBC
         if (pfp.inventory >= order.amount) {
           pfp.inventory -= order.amount;
-          // find PBC and increase its inventory immediately (simulate transfer)
           const pbc = s.firms.PBC.find((x) => x.id === order.from);
           if (pbc) {
             pbc.inventory += order.amount;
             order.filled = true;
             order.filledAt = s.t;
-            // log
             s.logs.push({ t: s.t, type: "fill", detail: order });
           }
         } else {
-          // need to request from PMP: create PFP->PMP order
           const needed = Math.max(0, order.amount - pfp.inventory);
-          // create order to PMP
           const pmp = s.firms.PMP[Math.floor(rng() * s.firms.PMP.length)];
           if (pmp) {
             const delayPfpToPmp = Math.round(randRange(rng, cfg.delays.pfpToPmp[0], cfg.delays.pfpToPmp[1]));
@@ -478,34 +408,27 @@ export default function App() {
             const order2 = { from: pfp.id, to: pmp.id, amount: needed, due: duePmp, filled: false, level: "PFP->PMP", originalOrder: order };
             s.orders.push(order2);
             pfp.inTransitOrders.push(order2);
-            // mark original order as waiting
             order.waitingFor = order2;
           }
         }
       } else if (order.level === "PFP->PMP") {
         const pmp = s.firms.PMP.find((x) => x.id === order.to);
         if (!pmp) continue;
-        // pmp supplies if inventory enough; else partial
         const supplied = Math.min(order.amount, pmp.inventory);
         pmp.inventory -= supplied;
         order.filled = supplied >= order.amount;
         order.filledAt = s.t;
-        // deliver to PFP inventory
         const pfp = s.firms.PFP.find((x) => x.id === order.from);
         if (pfp) {
           pfp.inventory += supplied;
         }
-        // If partially supplied, schedule more later (simulate acquisition)
         if (supplied < order.amount) {
-          // pmp tries to replenish inventory after its own adjustment delay
           const replenishDelay = Math.round(randRange(rng, cfg.delays.pmpAdjust[0], cfg.delays.pmpAdjust[1]));
           const extraAmount = order.amount - supplied;
-          // we schedule a new order to 'market' (not modeled) that will arrive later
           const fakeArrival = { from: "external", to: pmp.id, amount: extraAmount, due: s.t + replenishDelay, filled: false, level: "EXTERNAL->PMP" };
           s.orders.push(fakeArrival);
           s.logs.push({ t: s.t, type: "pmp_replenish_scheduled", detail: fakeArrival });
         }
-        // Try to fill original PBC order if that was waiting
         if (order.originalOrder) {
           const orig = order.originalOrder;
           if (!orig.filled) {
@@ -523,7 +446,6 @@ export default function App() {
           }
         }
       } else if (order.level === "EXTERNAL->PMP") {
-        // external supply arrives and increases pmp inventory
         const pmp = s.firms.PMP.find((x) => x.id === order.to);
         if (pmp) {
           pmp.inventory += order.amount;
@@ -533,19 +455,13 @@ export default function App() {
       }
     }
 
-    // 3) Producción: PBC produce based on inventory and planned
     let Qserved = 0;
     for (const f of s.firms.PBC) {
-      // Actual production possible: limited by inventory (inputs) and capacity
       const possible = Math.min(f.planned, f.inventory + f.capacity);
       const produced = Math.max(0, possible);
-      // consume inventory proportionally (simple model)
       const consumed = Math.min(f.inventory, produced);
       f.inventory -= consumed;
-      // produce goods and sell to consumers up to demand
-      // We'll assume firms sell at market price and supply to aggregate demand until either produced exhausted
       Qserved += produced;
-      // profits
       const price = s.price;
       const revenue = price * produced;
       const cost = f.marginalCost * produced;
@@ -553,87 +469,60 @@ export default function App() {
       f.history.push({ t: s.t, produced, revenue, cost, cash: f.cash });
     }
 
-    // 4) Mercado: consumidores compran según demanda real oculta (no conocen planes)
-    // We compute Qd = aggregate demand at price
     let Qd = 0;
     for (const c of s.consumers) {
       Qd += computeConsumerDemand(c, s.price, s.t, rng);
     }
 
-    // Served quantity is min(Qserved, Qd) — if supply > demand, unsold goods remain as inventory (simplified)
     const Q_actual_served = Math.min(Qserved, Qd);
-
-    // If supply < demand -> shortage costs (lost sales). Keep track for metrics
     const shortage = Math.max(0, Qd - Qserved);
 
-    // 5) Actual adjustments: price adjusts slowly based on excess demand
     const adjustGain = cfg.pPriceAdjustGain;
     const delta = Qd === 0 ? 0 : (Qd - Qserved) / Qd;
     s.price = Math.max(cfg.pMin, s.price * (1 + adjustGain * delta));
 
-    // 6) Innovaciones: cada empresa puede tener un evento aleatorio
     for (const flevel of [s.firms.PBC, s.firms.PFP, s.firms.PMP]) {
       for (const f of flevel) {
         if (rng() < cfg.innovation.probPerTick) {
-          // innovation event
           const costMul = randRange(rng, cfg.innovation.costMultRange[0], cfg.innovation.costMultRange[1]);
           const tfpMul = randRange(rng, cfg.innovation.tfpMultRange[0], cfg.innovation.tfpMultRange[1]);
           const adoption = Math.round(randRange(rng, cfg.innovation.adoptionRange[0], cfg.innovation.adoptionRange[1]));
-          // schedule adoption after delay
           const innov = { t0: s.t, adopted: false, adoptAt: s.t + adoption, costMul, tfpMul };
           f.innovations.push(innov);
-          s.logs.push({ t: s.t, type: "innovation_scheduled", firm: f.id, innov });
+          s.logs.push({ t: s.t, type: "innovación_programada", firm: f.id, innov });
         }
-        // check adoption
         for (const innov of f.innovations.filter((x) => !x.adopted && x.adoptAt <= s.t)) {
           f.marginalCost *= innov.costMul;
           f.A *= innov.tfpMul;
           innov.adopted = true;
-          s.logs.push({ t: s.t, type: "innovation_adopted", firm: f.id, innov });
+          s.logs.push({ t: s.t, type: "innovación_adoptada", firm: f.id, innov });
         }
       }
     }
 
-    // 7) Limpieza de órdenes llenas
     s.orders = s.orders.filter((o) => !o.filled);
 
-    // 8) Metrics & logs
-    // Efficiency E: contrafactual si las empresas hubiesen conocido la demanda real desde el inicio.
-    // Simplificación: consideramos Q_optimal(t) = Qd (si hubiesen sabido demanda serían capaces de servir Qd)
     const Qoptimal = Qd;
-    // acumulamos E por tick en una serie simple (en el denominador guardamos Qoptimal acumulado >0)
     s.series.price.push(s.price);
     s.series.qServed.push(Q_actual_served);
     s.series.qDemand.push(Qd);
     s.series.time.push(s.t);
 
-    // compute rolling efficiency over series history
     const sumQopt = s.series.qDemand.reduce((a, b) => a + b, 0) || 1;
     const sumAbs = s.series.qDemand.reduce((acc, q, idx) => acc + Math.abs((s.series.qServed[idx] || 0) - q), 0);
     const E = 1 - sumAbs / sumQopt;
-    s.series.efficiency = s.series.efficiency || [];
     s.series.efficiency.push(E);
 
-    // store logs
     s.logs.push({ t: s.t, type: "tick", price: s.price, Qd, Qserved: Q_actual_served, shortage });
 
-    // 9) Performance: trim series length
     const maxLen = 1000;
     for (const k of Object.keys(s.series)) {
       if (s.series[k].length > maxLen) s.series[k].shift();
     }
 
-    // 10) render update (throttle)
-    if (s.t % Math.max(1, Math.floor(1000 / tickMs)) === 0) {
-      setRenderTick((r) => r + 1);
-    } else {
-      setRenderTick((r) => r + 1);
-    }
+    setRenderTick((r) => r + 1);
   }
 
-  // -----------------------------
-  // Efecto principal: arranca/pausa el ciclo
-  // -----------------------------
   useEffect(() => {
     if (!simRef.current || !simRef.current.rng) initSimulation(seed);
     let timer = null;
@@ -645,16 +534,12 @@ export default function App() {
     return () => {
       if (timer) clearInterval(timer);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running, tickMs, mode, finished]);
 
-  // -----------------------------
-  // Export logs as CSV
-  // -----------------------------
   function exportLogsCSV() {
     const s = simRef.current;
     const lines = [];
-    lines.push(["t", "type", "detail"].join(","));
+    lines.push(["t", "tipo", "detalle"].join(","));
     for (const row of s.logs) {
       lines.push([row.t, row.type, JSON.stringify(row.detail || row)].join(","));
     }
@@ -663,9 +548,6 @@ export default function App() {
     setLogsCsvUrl(url);
   }
 
-  // -----------------------------
-  // Encuesta a subgrupo simulado (devuelve estimación OLS con ruido)
-  // -----------------------------
   function runSurvey(sampleSize = 30) {
     const s = simRef.current;
     const rng = s.rng;
@@ -679,32 +561,24 @@ export default function App() {
     const xs = sample.map((s) => s.p);
     const ys = sample.map((s) => s.q);
     const est = olsLinear(xs, ys);
-    s.logs.push({ t: s.t, type: "survey", sampleSize, est });
-    // return noisy estimate
+    s.logs.push({ t: s.t, type: "encuesta", sampleSize, est });
     return est;
   }
 
-  // -----------------------------
-  // Reset
-  // -----------------------------
   function handleReset() {
-    initSimulation(seed);
-    setFinished(false);
+    if (window.confirm("¿Estás seguro de reiniciar? Se perderán los datos actuales.")) {
+      initSimulation(seed);
+      setFinished(false);
+    }
   }
 
-  // -----------------------------
-  // Finalizar: calcula stats finales
-  // -----------------------------
   function handleFinalize() {
     setRunning(false);
     setFinished(true);
   }
 
-  // -----------------------------
-  // Renders: minicharts + status
-  // -----------------------------
-  function Sparkline({ data, height = 80, width = 300, color = "#0ea5e9", label }) {
-    if (!data || data.length === 0) return <div className="text-xs text-muted-foreground">sin datos</div>;
+  function Sparkline({ data, height = 100, width = 350, color = "#0ea5e9", label }) {
+    if (!data || data.length === 0) return <div className="text-xs text-gray-500">No hay datos aún</div>;
     const N = data.length;
     const min = Math.min(...data);
     const max = Math.max(...data);
@@ -726,38 +600,29 @@ export default function App() {
     );
   }
 
-  // Derived stats for UI
   const s = simRef.current;
   const latestPrice = s.series.price[s.series.price.length - 1] || defaultConfig.current.p0;
   const latestQd = s.series.qDemand[s.series.qDemand.length - 1] || 0;
   const latestQserved = s.series.qServed[s.series.qServed.length - 1] || 0;
   const latestE = s.series.efficiency ? s.series.efficiency[s.series.efficiency.length - 1] : 0;
-
-  // Lucro agregado
   const aggregateProfit = Object.values(s.firms).flat().reduce((sum, f) => sum + f.cash, 0);
 
-  // Small suggestion engine in simple language
   function suggest() {
-    // Simple rule: if E low and price above median demand => try to lower price
     if (!s || !s.series || s.series.price.length < 5) return "La simulación está empezando, espera un poco para ver sugerencias.";
     const recentQd = s.series.qDemand.slice(-20).reduce((a, b) => a + b, 0) / Math.max(1, Math.min(20, s.series.qDemand.length));
-    if (latestQserved < 0.9 * recentQd) return "Parece que no hay suficiente producto para todos los compradores. Prueba bajando el precio o aumentando la producción.";
-    if (latestQserved > 1.2 * recentQd) return "Hay más producto del que la gente quiere comprar. Prueba subiendo el precio o reduciendo la producción.";
-    return "Todo parece equilibrado ahora mismo. ¡Buen trabajo!";
+    if (latestQserved < 0.9 * recentQd) return "¡Parece que hay escasez de productos! Prueba bajando el precio o aumentando la producción para que más gente compre.";
+    if (latestQserved > 1.2 * recentQd) return "Hay exceso de oferta, sobran productos. Intenta subiendo el precio o reduciendo la producción para equilibrar.";
+    return "¡Todo parece equilibrado! Sigue observando para mantenerlo así.";
   }
 
-  // -----------------------------
-  // UI: JSX
-  // -----------------------------
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900 p-4 font-sans">
       <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.5/MathJax.js?config=TeX-MML-AM_CHTML" async></script>
       <div className="max-w-7xl mx-auto">
-        {/* Panel de ayuda para principiantes */}
         {showHelp && (
           <div className="mb-6 bg-blue-100 p-4 rounded-lg shadow">
             <div className="flex justify-between items-center">
-              <h2 className="text-lg font-semibold">Bienvenido a la Simulación Económica Simple</h2>
+              <h2 className="text-lg font-semibold">Bienvenido a la Simulación Económica Sencilla</h2>
               <button onClick={() => setShowHelp(false)} className="text-blue-500">Cerrar</button>
             </div>
             <p className="mt-2 text-sm">Esta herramienta simula un mercado con compradores y productores. No necesitas saber de finanzas para usarla.</p>
@@ -766,9 +631,10 @@ export default function App() {
               <li><strong>PFP</strong>: Empresas que hacen herramientas para las PBC.</li>
               <li><strong>PMP</strong>: Empresas que sacan materias primas (como madera o metal).</li>
               <li><strong>Demanda</strong>: Cuánto quiere comprar la gente a cierto precio.</li>
-              <li><strong>Eficiencia</strong>: Qué tan bien se ajusta la producción a lo que la gente quiere (0% malo, 100% perfecto).</li>
+              <li><strong>Eficiencia</strong>: Qué tan bien se ajusta la producción a lo que la gente quiere (como equilibrar una balanza).</li>
               <li>Usa los botones para controlar y observa los gráficos para ver cómo cambia todo en tiempo real.</li>
             </ul>
+            <button onClick={() => setShowTutorial(true)} className="mt-2 text-blue-500">Ver tutorial paso a paso</button>
           </div>
         )}
 
@@ -778,25 +644,26 @@ export default function App() {
             <p className="text-xs text-gray-500 mb-2">Usa estos botones para manejar la simulación.</p>
             <div className="flex gap-2 mt-3">
               <button className="px-3 py-2 bg-green-500 text-white rounded" onClick={() => setRunning(true)} title="Inicia o continúa la simulación">
-                ▶️ Ejecutar
+                ▶️ Iniciar
               </button>
-              <button className="px-3 py-2 bg-yellow-400 text-white rounded" onClick={() => setRunning(false)} title="Detiene la simulación temporalmente">
+              <button className="px-3 py-2 bg-yellow-400 text-white rounded" onClick={() => setRunning(false)} title="Detiene temporalmente para analizar">
                 ⏸ Pausar
               </button>
-              <button className="px-3 py-2 bg-red-500 text-white rounded" onClick={handleReset} title="Reinicia todo desde cero">
-                🔁 Reset
+              <button className="px-3 py-2 bg-red-500 text-white rounded" onClick={handleReset} title="Reinicia todo desde el principio">
+                🔁 Reiniciar
               </button>
-              <button className="px-3 py-2 bg-purple-500 text-white rounded" onClick={handleFinalize} title="Detiene y muestra resultados finales">
+              <button className="px-3 py-2 bg-purple-500 text-white rounded" onClick={handleFinalize} title="Detiene y muestra resumen final">
                 Finalizar
               </button>
             </div>
 
             <div className="mt-4 space-y-2">
-              <label className="block text-sm">Semilla (para repetir el mismo experimento)</label>
-              <input className="w-full p-2 border rounded" value={seed} onChange={(e) => setSeed(parseInt(e.target.value || 0))} />
+              <label className="block text-sm" title="Número para reproducir la misma simulación (controla la aleatoriedad)">Semilla</label>
+              <input type="number" className="w-full p-2 border rounded" value={seed} onChange={(e) => setSeed(parseInt(e.target.value || 0))} />
               <button
                 className="w-full mt-2 p-2 bg-blue-600 text-white rounded"
                 onClick={() => initSimulation(Number(seed || DEFAULT_SEED))}
+                title="Reinicia con esta semilla para reproducir resultados"
               >
                 Inicializar
               </button>
@@ -804,36 +671,42 @@ export default function App() {
 
             <div className="mt-4">
               <h3 className="font-medium">Modo de Demanda</h3>
-              <p className="text-xs text-gray-500 mb-2">Elige cómo se calcula lo que la gente quiere comprar.</p>
+              <p className="text-xs text-gray-500 mb-2" title="Elige cómo se calcula lo que la gente quiere comprar">Elige el modo</p>
               <div className="mt-2">
                 <label className="inline-flex items-center">
                   <input type="radio" name="mode" checked={mode === "auto"} onChange={() => setMode("auto")} />
-                  <span className="ml-2" title="La simulación decide automáticamente la demanda (aleatoria).">Automático</span>
+                  <span className="ml-2" title="La simulación genera demandas aleatorias automáticamente">Automático</span>
                 </label>
                 <label className="inline-flex items-center ml-4">
                   <input type="radio" name="mode" checked={mode === "user"} onChange={() => setMode("user")} />
-                  <span className="ml-2" title="Tú introduces una fórmula para la demanda.">Manual</span>
+                  <span className="ml-2" title="Tú defines una fórmula para la demanda">Manual</span>
                 </label>
               </div>
 
               {mode === "user" && (
                 <div className="mt-2 bg-gray-50 p-2 rounded">
-                  <div className="text-sm mb-2">Introduce una fórmula para la demanda (ej: q = a - b p). Usa números simples.</div>
+                  <div className="text-sm mb-2" title="Introduce una fórmula sencilla, como q = 100 - 5 p (cuando el precio sube, la demanda baja)">Fórmula de demanda (ej: q = a - b p)</div>
                   <input className="w-full p-2 border rounded" value={userDemandLatex} onChange={(e) => setUserDemandLatex(e.target.value)} />
                   {parseError && <p className="text-red-500 text-xs mt-1">{parseError}</p>}
                   <div className="mt-2 grid grid-cols-2 gap-2">
                     <div>
-                      <label className="text-sm">a (intercepto)</label>
-                      <input className="w-full p-2 border rounded" type="number" value={userParams.a} onChange={(e) => setUserParams({ ...userParams, a: parseFloat(e.target.value) })} />
+                      <label className="text-sm" title="Valor inicial de la demanda (cuando precio es 0)">a</label>
+                      <input type="number" className="w-full p-2 border rounded" value={userParams.a} onChange={(e) => setUserParams({ ...userParams, a: parseFloat(e.target.value) })} />
                     </div>
                     <div>
-                      <label className="text-sm">b (pendiente)</label>
-                      <input className="w-full p-2 border rounded" type="number" value={userParams.b} onChange={(e) => setUserParams({ ...userParams, b: parseFloat(e.target.value) })} />
+                      <label className="text-sm" title="Cómo afecta el precio a la demanda (positivo: baja demanda al subir precio)">b</label>
+                      <input type="number" className="w-full p-2 border rounded" value={userParams.b} onChange={(e) => setUserParams({ ...userParams, b: parseFloat(e.target.value) })} />
                     </div>
                   </div>
-                  <button className="w-full mt-2 p-2 bg-indigo-600 text-white rounded" onClick={applyUserDemand}>
-                    Aplicar fórmula (sin detener)
+                  <button className="w-full mt-2 p-2 bg-indigo-600 text-white rounded" onClick={applyUserDemand} title="Aplica tu fórmula sin detener la simulación">
+                    Aplicar fórmula
                   </button>
+                  <div className="mt-2 text-xs">Ejemplos:</div>
+                  <div className="flex gap-2">
+                    <button className="flex-1 p-1 bg-gray-200 rounded" onClick={() => loadExampleDemand(1)}>Simple</button>
+                    <button className="flex-1 p-1 bg-gray-200 rounded" onClick={() => loadExampleDemand(2)}>Moderado</button>
+                    <button className="flex-1 p-1 bg-gray-200 rounded" onClick={() => loadExampleDemand(3)}>Exponencial</button>
+                  </div>
                   <div id="latex-preview" className="mt-2 text-center" dangerouslySetInnerHTML={{ __html: `$$${userDemandLatex}$$` }} />
                 </div>
               )}
@@ -841,18 +714,18 @@ export default function App() {
 
             <div className="mt-4">
               <h3 className="font-medium">Herramientas Útiles</h3>
-              <p className="text-xs text-gray-500 mb-2">Obtén información extra o descarga datos.</p>
+              <p className="text-xs text-gray-500 mb-2" title="Obtén más información o descarga datos">Extras para analizar</p>
               <button className="w-full mt-2 p-2 bg-slate-600 text-white rounded" onClick={() => {
                 const est = runSurvey(30);
-                alert(`Estimación aproximada: q ≈ ${est.a.toFixed(1)} + ${est.b.toFixed(1)} p\n(Esto es una idea general, no exacta).`);
-              }} title="Pregunta a un grupo pequeño de compradores qué piensan (con algo de error).">
+                alert(`Estimación aproximada: q ≈ ${est.a.toFixed(1)} + ${est.b.toFixed(1)} p\n(Una idea general de la demanda, con algo de error).`);
+              }} title="Pregunta a un grupo pequeño de compradores para estimar la demanda">
                 Encuesta rápida (30 compradores)
               </button>
-              <button className="w-full mt-2 p-2 bg-emerald-600 text-white rounded" onClick={exportLogsCSV} title="Descarga un archivo con todos los eventos de la simulación.">
+              <button className="w-full mt-2 p-2 bg-emerald-600 text-white rounded" onClick={exportLogsCSV} title="Descarga un archivo con todos los eventos">
                 Exportar datos (CSV)
               </button>
               {logsCsvUrl && (
-                <a className="block mt-2 text-sm text-blue-700" href={logsCsvUrl} download={`sim_logs_seed_${seed}.csv`}>Descargar archivo</a>
+                <a className="block mt-2 text-sm text-blue-700" href={logsCsvUrl} download={`logs_simulacion_semilla_${seed}.csv`}>Descargar archivo</a>
               )}
             </div>
           </div>
@@ -860,39 +733,39 @@ export default function App() {
           <div className="col-span-9 bg-white rounded-2xl shadow p-4">
             <div className="flex justify-between items-start">
               <h2 className="text-xl font-semibold">Panel de Resultados en Tiempo Real</h2>
-              <div className="text-sm text-gray-500">Tiempo transcurrido: {s.t} segundos</div>
+              <div className="text-sm text-gray-500">Tiempo: {s.t} segundos</div>
             </div>
 
             <div className="mt-4">
-              <h3 className="font-medium">Métricas Clave</h3>
-              <p className="text-xs text-gray-500 mb-2">Resumen de cómo va la simulación.</p>
+              <h3 className="font-medium">Métricas Principales</h3>
+              <p className="text-xs text-gray-500 mb-2" title="Resumen de cómo va el mercado">Ve el estado actual</p>
               <div className="grid grid-cols-4 gap-4">
-                <div className="p-3 bg-gray-50 rounded" title="El precio actual de los productos en el mercado.">
+                <div className="p-3 bg-gray-50 rounded" title="El precio actual de los productos">
                   <div className="text-xs text-gray-500">Precio</div>
                   <div className="text-lg font-medium">{latestPrice.toFixed(3)}</div>
                 </div>
-                <div className="p-3 bg-gray-50 rounded" title="Cuánto quiere comprar la gente en total (oculto, con algo de ruido).">
+                <div className="p-3 bg-gray-50 rounded" title="Cuánto quiere comprar la gente en total (estimado)">
                   <div className="text-xs text-gray-500">Demanda Total</div>
                   <div className="text-lg font-medium">{latestQd.toFixed(2)}</div>
                 </div>
-                <div className="p-3 bg-gray-50 rounded" title="Cuánto producto se vendió realmente.">
+                <div className="p-3 bg-gray-50 rounded" title="Cuánto producto se vendió">
                   <div className="text-xs text-gray-500">Cantidad Vendida</div>
                   <div className="text-lg font-medium">{latestQserved.toFixed(2)}</div>
                 </div>
-                <div className="p-3 bg-gray-50 rounded" title="Qué tan bien se ajusta la producción a la demanda (100% es perfecto).">
+                <div className="p-3 bg-gray-50 rounded" title="Qué tan bien se ajusta la producción (100% perfecto)">
                   <div className="text-xs text-gray-500">Eficiencia</div>
-                  <div className="text-lg font-medium">{(latestE * 100).toFixed(2)}%</div>
+                  <div className="text-lg font-medium" style={{ color: latestE > 0.8 ? 'green' : latestE < 0.5 ? 'red' : 'orange' }}>{(latestE * 100).toFixed(2)}%</div>
                 </div>
               </div>
               <div className="mt-4 p-3 bg-yellow-100 rounded">
-                <div className="text-sm font-medium">Sugerencia simple:</div>
+                <div className="text-sm font-medium">Sugerencia:</div>
                 <div className="text-sm">{suggest()}</div>
               </div>
             </div>
 
             <div className="mt-6">
               <h3 className="font-medium">Gráficos de Evolución</h3>
-              <p className="text-xs text-gray-500 mb-2">Ve cómo cambian las cosas con el tiempo (últimos {historyWindow} segundos).</p>
+              <p className="text-xs text-gray-500 mb-2" title="Ve cómo cambian las cosas en los últimos segundos">Últimos {historyWindow} segundos</p>
               <div className="grid grid-cols-2 gap-4">
                 <Sparkline data={s.series.price.slice(-historyWindow)} color="#ef4444" label="Precio" />
                 <Sparkline data={s.series.qDemand.slice(-historyWindow)} color="#3b82f6" label="Demanda Oculta" />
@@ -904,7 +777,7 @@ export default function App() {
             <div className="mt-6 grid grid-cols-2 gap-4">
               <div>
                 <h3 className="font-medium">Eventos Recientes</h3>
-                <p className="text-xs text-gray-500 mb-2">Qué ha pasado últimamente en la simulación.</p>
+                <p className="text-xs text-gray-500 mb-2" title="Qué ha pasado últimamente">Últimos eventos</p>
                 <div className="h-48 overflow-auto bg-gray-50 rounded p-2 text-xs">
                   {s.logs.slice(-100).map((L, idx) => (
                     <div key={idx} className="p-1 border-b border-gray-100">
@@ -915,11 +788,11 @@ export default function App() {
               </div>
               <div>
                 <h3 className="font-medium">Resumen de Empresas</h3>
-                <p className="text-xs text-gray-500 mb-2">Estado actual de las productoras (inventario y ganancias).</p>
+                <p className="text-xs text-gray-500 mb-2" title="Estado de las productoras">Inventario y ganancias</p>
                 <div className="h-48 overflow-auto bg-gray-50 rounded p-2 text-xs">
                   <div className="mb-2"><strong>PBC (Productos para consumidores)</strong></div>
                   {s.firms.PBC.map((f) => (
-                    <div key={f.id} className="border-b border-dashed py-1" title={`Productividad: ${f.A.toFixed(2)}, Capacidad: ${f.capacity.toFixed(2)}`}>
+                    <div key={f.id} className="border-b border-dashed py-1" title={`Productividad: ${f.A.toFixed(2)}`}>
                       {f.id}: Inv {f.inventory.toFixed(2)}, Ganancias {f.cash.toFixed(1)}
                     </div>
                   ))}
@@ -936,8 +809,8 @@ export default function App() {
             </div>
 
             <div className="mt-6">
-              <h3 className="font-medium">Observaciones de Mercado (con ruido)</h3>
-              <p className="text-xs text-gray-500 mb-2">Datos aproximados de lo que ven los planificadores (no perfectos).</p>
+              <h3 className="font-medium">Observaciones del Mercado (con ruido)</h3>
+              <p className="text-xs text-gray-500 mb-2" title="Datos aproximados, como los vería un planificador">Muestra con imprecisión</p>
               <div className="grid grid-cols-5 gap-2 text-xs">
                 {s.hiddenDemandSamples.slice(0, 10).map((h, i) => (
                   <div key={i} className="p-2 bg-white rounded shadow-sm">Precio: {h.p.toFixed(2)}<br/>Cantidad: {h.q.toFixed(2)}</div>
@@ -953,22 +826,41 @@ export default function App() {
           <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">
             <h2 className="text-xl font-bold mb-4">Resultados Finales</h2>
             <div className="space-y-2 text-sm">
-              <p>Eficiencia: <strong>{(latestE * 100).toFixed(2)}%</strong> (qué tan bien se ajustó todo)</p>
-              <p>Ganancias Totales: <strong>{aggregateProfit.toFixed(2)}</strong> (dinero ganado por empresas)</p>
+              <p>Eficiencia: <strong>{(latestE * 100).toFixed(2)}%</strong> (qué tan bien se ajustó)</p>
+              <p>Ganancias Totales: <strong>{aggregateProfit.toFixed(2)}</strong></p>
               <p>Precio Final: <strong>{latestPrice.toFixed(3)}</strong></p>
               <p>Demanda Final: <strong>{latestQd.toFixed(2)}</strong></p>
               <p>Ventas Finales: <strong>{latestQserved.toFixed(2)}</strong></p>
             </div>
             <button className="mt-4 w-full p-2 bg-red-500 text-white rounded" onClick={() => setFinished(false)}>
-              Cerrar y continuar
+              Cerrar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showTutorial && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+          <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">
+            <h2 className="text-xl font-bold mb-4">Tutorial Paso a Paso</h2>
+            <ol className="space-y-2 text-sm list-decimal pl-5">
+              <li>Inicia la simulación con el botón 'Iniciar'.</li>
+              <li>Observa los gráficos para ver cómo cambia el precio y la demanda.</li>
+              <li>Prueba el modo manual: carga un ejemplo y aplica la fórmula.</li>
+              <li>Usa la encuesta para obtener pistas sobre la demanda oculta.</li>
+              <li>Sigue las sugerencias para mejorar la eficiencia.</li>
+              <li>Exporta datos o finaliza cuando quieras ver el resumen.</li>
+            </ol>
+            <button className="mt-4 w-full p-2 bg-blue-500 text-white rounded" onClick={() => setShowTutorial(false)}>
+              Cerrar tutorial
             </button>
           </div>
         </div>
       )}
 
       <footer className="max-w-7xl mx-auto mt-6 text-xs text-gray-500">
-        <div>Nota: Esta simulación corre enteramente en el navegador y no guarda datos persistentemente. Cerrar la pestaña borra todo.</div>
-        <div className="mt-2">Para desplegar en GitHub Pages: crear un repo, añadir este proyecto React, compilar (npm run build) y activar Pages (carpeta build/). Si quieres, puedo generar el README y el pipeline GitHub Actions para deploy automático.</div>
+        <div>Nota: Esta simulación corre en el navegador y no guarda datos. Cierra la pestaña y se borra todo.</div>
+        <div className="mt-2">Para desplegar en GitHub Pages: crea un repo, añade este proyecto React, compila (npm run build) y activa Pages (carpeta build/).</div>
       </footer>
     </div>
   );
