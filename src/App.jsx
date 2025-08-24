@@ -449,17 +449,19 @@ export default function App() {
       else if (typeRand < 0.98) type = "exp";
       else type = "poly";
 
+      // Se asignan valores iniciales a y b
       const a = randRange(rng, 5, 200);
       const signRoll = rng();
       let b = 0;
       if (signRoll < 0.75) b = randRange(rng, 0.01, 10);
       else if (signRoll < 0.95) b = 0;
       else b = -randRange(rng, 0.1, 5);
+      
+      // Se agrega la propiedad nextChange para cambios de preferencias
+      const nextChange = Math.floor(randRange(rng, 0, 50));
 
-      const Ti = Math.round(
-        randRange(rng, DEFAULT.consumerUpdateRange[0], DEFAULT.consumerUpdateRange[1])
-      );
-      s.consumers.push({ id: `C${i}`, type, a, b, Ti, nextUpdateAt: Ti, lastUpdate: 0 });
+      const Ti = Math.round(randRange(rng, DEFAULT.consumerUpdateRange[0], DEFAULT.consumerUpdateRange[1]));
+      s.consumers.push({ id: `C${i}`, type, a, b, Ti, nextUpdateAt: Ti, lastUpdate: 0, nextChange });
     }
 
     // create firms
@@ -570,6 +572,25 @@ export default function App() {
     // consumers update
     let Qagg = 0;
     for (const c of s.consumers) {
+      // Si se supera el instante para cambio de preferencias, actualizamos type y coeficientes
+      if (s.t >= c.nextChange) {
+        const r = rng();
+        if (r < 0.33) {
+          c.type = "linear";
+          c.a = randRange(rng, 100, 150);
+          c.b = randRange(rng, 0.5, 1.0);
+        } else if (r < 0.66) {
+          c.type = "log";
+          c.a = randRange(rng, 80, 120);
+          c.b = randRange(rng, 5, 10);
+        } else {
+          c.type = "exp";
+          c.a = randRange(rng, 90, 120);
+          c.b = randRange(rng, 0.1, 0.3);
+        }
+        c.nextChange = s.t + 30 + Math.floor(randRange(rng, 0, 70));
+      }
+      
       if (s.t >= c.nextUpdateAt) {
         if (rng() < 0.15) {
           c.a = randRange(rng, 5, 200);
@@ -586,10 +607,10 @@ export default function App() {
           s.t + Math.round(randRange(rng, DEFAULT.consumerUpdateRange[0], DEFAULT.consumerUpdateRange[1]));
         c.lastUpdate = s.t;
       }
-      // small volatility
+      // pequeñas variaciones
       c.a += (rng() - 0.5) * 0.01 * c.a;
       c.b += (rng() - 0.5) * 0.01 * c.b;
-      // feedback via experimental phases
+      // feedback experimental
       const phase = EXPERIMENT_PHASES[phaseIdx];
       if (phase.feedbackStrength) c.a += phase.feedbackStrength * (prevPrice - s.price);
 
